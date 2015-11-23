@@ -1,0 +1,78 @@
+[DEFAULT]
+default-targets:     all
+bsc-compile-options: -aggressive-conditions -keep-fires -show-schedule +RTS -K20M -RTS
+bsc-link-options:    -Xc++ -O0 -keep-fires -Xc -std=c99
+
+[common]
+hide-target
+top-module:             mkBridge
+top-file:               ../Bridge.bsv
+bsv-source-directories: ../../scemi ../../src ../../src/includes ../../src/ref
+verilog-directory:      vlog_dut
+binary-directory:       bdir_dut
+simulation-directory:   simdir_dut
+info-directory:         info_dut
+altera-directory:       quartus
+xilinx-directory:       xilinx
+scemi-parameters-file:  scemi.params
+
+[dut]
+hide-target
+extends-target: common
+
+[bsim_dut]
+hide-target
+extends-target:             dut
+build-for:                  bluesim
+scemi-type:                 TCP
+scemi-tcp-port:             3375
+create-workstation-project: true
+post-targets:               tb
+imported-c-files:           ../../src/ref/mem.c ../../src/ref/lsq.c
+
+[threecache]
+extends-target:           bsim_dut
+bsv-define:               CORE_NUM=2 PROC_FILE=Proc CORE_FILE=ThreeCycle
+workstation-project-file: threecache.bspec
+exe-file:                 threecache_dut
+
+[sixcache]
+extends-target:           bsim_dut
+bsv-define:               CORE_NUM=2 PROC_FILE=Proc CORE_FILE=SixStage
+workstation-project-file: sixcache.bspec
+exe-file:                 sixcache_dut
+
+[threestq]
+extends-target:           bsim_dut
+bsv-define:               CORE_NUM=2 PROC_FILE=Proc CORE_FILE=ThreeCycle STQ
+workstation-project-file: threestq.bspec
+exe-file:                 threestq_dut
+
+[sixstq]
+extends-target:           bsim_dut
+bsv-define:               CORE_NUM=2 PROC_FILE=Proc CORE_FILE=SixStage STQ
+workstation-project-file: sixstq.bspec
+exe-file:                 sixstq_dut
+
+[threelhusm]
+extends-target:           bsim_dut
+bsv-define:               CORE_NUM=2 PROC_FILE=Proc CORE_FILE=ThreeCycle LHUSM
+workstation-project-file: threelhusm.bspec
+exe-file:                 threelhusm_dut
+
+[sixlhusm]
+extends-target:           bsim_dut
+bsv-define:               CORE_NUM=2 PROC_FILE=Proc CORE_FILE=SixStage LHUSM
+workstation-project-file: sixlhusm.bspec
+exe-file:                 sixlhusm_dut
+
+[tb]
+extends-target:       common
+scemi-tb
+build-for:            c++
+c++-header-directory: tbinclude
+c++-header-aliases
+c++-files:            ../Tb.cpp ../ResetXactor.cpp
+c++-options:          -O0
+exe-file:             tb
+c++-define: CORE_NUM=2
