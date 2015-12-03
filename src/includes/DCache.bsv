@@ -9,6 +9,8 @@ import Ehr::*;
 import RefTypes::*;
 
 
+typedef enum{Ready, StartMiss, SendFillReq, WaitFillResp, Resp} CacheStatus 
+    deriving(Eq, Bits);
 module mkDCache#(CoreID id)(
 		MessageGet fromMem,
 		MessagePut toMem,
@@ -22,7 +24,7 @@ module mkDCache#(CoreID id)(
     Vector#(CacheRows, Reg#(CacheLine)) dataArray <- replicateM(mkRegU);
     Vector#(CacheRows, Reg#(Maybe#(CacheTag))) 
             tagArray <- replicateM(mkReg(Invalid));
-    Vector#(CacheRows, Reg#(Bool)) dirtyArray <- replicateM(mkReg(False));
+    Vector#(CacheRows, Reg#(MSI)) privArray <- replicateM(mkReg(I));
 
     // Book keeping
     Fifo#(2, Data) hitQ <- mkBypassFifo;
@@ -30,108 +32,6 @@ module mkDCache#(CoreID id)(
     Reg#(MemReq) missReq <- mkRegU;
     Fifo#(2, MemReq) memReqQ <- mkCFFifo;
     Fifo#(2, CacheLine) memRespQ <- mkCFFifo;
-
-
-    function CacheWordSelect getWord(Addr addr) = truncate(addr >> 2);
-    function CacheIndex getIndex(Addr addr) = truncate(addr >> 6);
-    function CacheTag getTag(Addr addr) = truncateLSB(addr);
-
-    rule startMiss (status == StartMiss);
-
-        // calculate cache index and tag
-        $display("[[Cache]] Start Miss");
-        CacheWordSelect sel = getWord(missReq.addr);
-        CacheIndex idx = getIndex(missReq.addr);
-        let tag = tagArray[idx];
-
-        // figure out if a writeback is necessary
-        let dirty = dirtyArray[idx];
-        if (isValid(tag) && dirty) begin
-            $display("[[Cache]] -- Writeback dirty cache line --");
-            let addr = {fromMaybe(?, tag), idx, sel, 2'b0};
-            memReqQ.enq(MemReq {op: St, addr: addr, data:?});
-        end
-        
-        status <= SendFillReq;
-
-    endrule
-
-
-    rule sendFillReq (status == SendFillReq);
-
-        $display("[[Cache]] Send Fill Request");
-        memReqQ.enq(MemReq {op: Ld, addr: missReq.addr, data:?});
-        status <= WaitFillResp;
-
-    endrule
-
-
-    rule waitFillResp (status == WaitFillResp);
-        
-        // calculate cache index and tag
-        $display("[[Cache]] Wait Fill Response");
-        CacheWordSelect sel = getWord(missReq.addr);
-        CacheIndex idx = getIndex(missReq.addr);
-        let tag = getTag(missReq.addr);
-        
-        // set cache line with data
-        let line = memRespQ.first;
-        tagArray[idx] <= Valid(tag);
-        
-        /// check load
-        if (missReq.op == Ld) begin
-            // enqueue result into hit queue
-            dirtyArray[idx] <= False;
-            hitQ.enq(line[sel]);
-        end
-        else begin
-            // store
-            line[sel] = missReq.data;
-            dirtyArray[idx] <= True;
-        end
-        dataArray[idx] <= line;
-        
-        // dequeue response queue
-        memRespQ.deq;
-
-        // reset status
-        status <= Ready;
-    endrule
-
-
-    rule sendToMemory;
-
-        // dequeue to get DRAM request
-        $display("[[Cache]] Sending to DRAM");
-        let r = memReqQ.first;
-
-        // translate data to cache line
-        CacheIndex idx = getIndex(r.addr);
-        CacheLine line = dataArray[idx];
-
-        // create enable signal
-        Bit#(CacheLineWords) en;
-        if (r.op == St) en = '1;
-        else en = '0; 
-
-        refDMem.req(WideMemReq{
-            write_en: en,
-            addr: r.addr,
-            data: line
-        } );
-        memReqQ.deq;
-
-    endrule
-
-
-    rule getFromMemory;
-
-        // get DRAM response
-        $display("[[Cache]] Getting from DRAM");
-        let line <- refDMem.resp();
-        memRespQ.enq(line);
-
-    endrule
 
 
     rule doReq (status == Ready);
@@ -142,7 +42,7 @@ module mkDCache#(CoreID id)(
 
         // calculate cache index and tag
         $display("[Cache] Processing request");
-        CacheWordSelect sel = getWord(r.addr);
+        CacheWordSelect sel = getWordSelect(r.addr);
         CacheIndex idx = getIndex(r.addr);
         CacheTag tag = getTag(r.addr);
 
@@ -151,30 +51,113 @@ module mkDCache#(CoreID id)(
         if (tagArray[idx] matches tagged Valid .currTag 
             &&& currTag == tag) hit = True;
 
-        // check load
-        if (r.op == Ld) begin
-            if (hit) begin
+        if (hit) begin
+            if (r.op == Ld) begin
                 $display("[Cache] Load hit");
                 hitQ.enq(dataArray[idx][sel]);
             end
-            else begin
-                $display("[Cache] Load miss");
-                missReq <= r;
-                status <= StartMiss;
+            else begin // it is a store
+                if (privArray[idx] == M) begin
+                    $display("[Cache] Write hit");
+                    dataArray[idx][sel] <= r.data;
+                end
+                else begin
+                    $display("[Cache] No write privledge");
+                    missReq <= r;
+                    status <= SendFillReq;
+                end
             end
         end
-        else begin // store request
-            if (hit) begin
-                $display("[Cache] Write hit");
-                dataArray[idx][sel] <= r.data;
-                dirtyArray[idx] <= True;
-            end
-            else begin
-                $display("[Cache] Write miss");
-                missReq <= r;
-                status <= StartMiss;
-            end
+        else begin
+            $display("[Cache] Cache miss");
+            missReq <= r;
+            status <= StartMiss;
         end
+    endrule
+
+
+    rule startMiss (status == StartMiss);
+
+        // calculate cache index and tag
+        $display("[[Cache]] Start Miss");
+        CacheWordSelect sel = getWordSelect(missReq.addr);
+        CacheIndex idx = getIndex(missReq.addr);
+        let tag = tagArray[idx];
+
+        if (privArray[idx] != I) begin
+           let addr = {fromMaybe(?, tag), idx, sel, 2'b0};
+           Maybe#(CacheLine) line;
+           if (privArray[idx] == M) line = Valid(dataArray[idx]);
+           else line = Invalid;
+           privArray[idx] <= I;
+           toMem.enq_resp( CacheMemResp {child: id, 
+                                  addr: addr, 
+                                  state: I, 
+                                  data: line});
+        end
+        status <= SendFillReq;
+
+    endrule
+
+
+    rule sendFillReq (status == SendFillReq);
+
+        $display("[[Cache]] Send Fill Request");
+        let upg = (missReq.op == Ld)? S : M;
+        toMem.enq_req( CacheMemReq {child: id, addr:missReq.addr, state: upg});
+        status <= WaitFillResp;
+
+    endrule
+
+
+    rule waitFillResp (status == WaitFillResp && fromMem.hasResp);
+        
+        // calculate cache index and tag
+        $display("[[Cache]] Wait Fill Response");
+        CacheWordSelect sel = getWordSelect(missReq.addr);
+        CacheIndex idx = getIndex(missReq.addr);
+        let tag = getTag(missReq.addr);
+        
+        // fill cache line with data
+        CacheMemResp x = ?;
+        case (fromMem.first) matches
+            tagged Resp .resp : x = resp;
+        endcase
+            
+        fromMem.deq;
+        //FIXME: look here
+        let line = fromMaybe(?, x.data);
+        tagArray[idx] <= Valid(tag);
+            
+        /// check load
+        if (missReq.op == Ld) begin
+            // enqueue result into hit queue
+            hitQ.enq(line[sel]);
+        end
+        else begin
+            // store
+            line[sel] = missReq.data;
+        end
+        dataArray[idx] <= line;
+        
+        // dequeue response queue
+        memRespQ.deq;
+
+        // reset status
+        status <= Resp;
+    endrule
+
+
+    rule sendProc (status == Resp);
+        
+        CacheIndex idx = getIndex(missReq.addr);
+        CacheWordSelect sel = getWordSelect(missReq.addr);
+        
+        //FIXME c2p??            
+        if (missReq.op == Ld) hitQ.enq(dataArray[idx][sel]);
+        
+        status <= Ready;
+
     endrule
 
 
