@@ -22,17 +22,13 @@ module mkDCache#(CoreID id)(
 
     // The cache memory
     Vector#(CacheRows, Reg#(CacheLine)) dataArray <- replicateM(mkRegU);
-    Vector#(CacheRows, Reg#(Maybe#(CacheTag))) 
-            tagArray <- replicateM(mkReg(Invalid));
+    Vector#(CacheRows, Reg#(CacheTag)) tagArray <- replicateM(mkRegU);
     Vector#(CacheRows, Reg#(MSI)) privArray <- replicateM(mkReg(I));
 
     // Book keeping
     Fifo#(2, Data) hitQ <- mkBypassFifo;
     Fifo#(1, MemReq) reqQ <- mkBypassFifo;
     Reg#(MemReq) missReq <- mkRegU;
-    Fifo#(2, MemReq) memReqQ <- mkCFFifo;
-    Fifo#(2, CacheLine) memRespQ <- mkCFFifo;
-
 
     rule doReq (status == Ready);
 
@@ -48,8 +44,7 @@ module mkDCache#(CoreID id)(
 
         // check if in cache
         let hit = False;
-        if (tagArray[idx] matches tagged Valid .currTag 
-            &&& currTag == tag) hit = True;
+        if (tagArray[idx] == tag && privArray[idx] > I) hit = True;
 
         if (hit) begin
             if (r.op == Ld) begin
@@ -85,11 +80,17 @@ module mkDCache#(CoreID id)(
         let tag = tagArray[idx];
 
         if (privArray[idx] != I) begin
-           let addr = {fromMaybe(?, tag), idx, sel, 2'b0};
+           
+           // Invalidate cache line
+           privArray[idx] <= I;
+
+           // Determine if a valid cache line needs to write back
            Maybe#(CacheLine) line;
            if (privArray[idx] == M) line = Valid(dataArray[idx]);
            else line = Invalid;
-           privArray[idx] <= I;
+           
+           // Send cache line back to main memory
+           let addr = {tag, idx, sel, 2'b0};
            toMem.enq_resp( CacheMemResp {child: id, 
                                   addr: addr, 
                                   state: I, 
@@ -103,6 +104,8 @@ module mkDCache#(CoreID id)(
     rule sendFillReq (status == SendFillReq);
 
         $display("[[Cache]] Send Fill Request");
+
+        // send upgrade request, S if load; otherwise M
         let upg = (missReq.op == Ld)? S : M;
         toMem.enq_req( CacheMemReq {child: id, addr:missReq.addr, state: upg});
         status <= WaitFillResp;
@@ -123,11 +126,8 @@ module mkDCache#(CoreID id)(
         case (fromMem.first) matches
             tagged Resp .resp : x = resp;
         endcase
-            
-        fromMem.deq;
         //FIXME: look here
         let line = fromMaybe(?, x.data);
-        tagArray[idx] <= Valid(tag);
             
         /// check load
         if (missReq.op == Ld) begin
@@ -138,11 +138,14 @@ module mkDCache#(CoreID id)(
             // store
             line[sel] = missReq.data;
         end
-        dataArray[idx] <= line;
         
-        // dequeue response queue
-        memRespQ.deq;
-
+        // update cache line tag and privledge
+        tagArray[idx] <= tag;
+        privArray[idx] <= x.state;
+        
+        // dequeue memory response
+        fromMem.deq;
+        
         // reset status
         status <= Resp;
     endrule
@@ -153,7 +156,8 @@ module mkDCache#(CoreID id)(
         CacheIndex idx = getIndex(missReq.addr);
         CacheWordSelect sel = getWordSelect(missReq.addr);
         
-        //FIXME c2p??            
+        // enqueue load into hit queue
+        //FIXME c2p??
         if (missReq.op == Ld) hitQ.enq(dataArray[idx][sel]);
         
         status <= Ready;
