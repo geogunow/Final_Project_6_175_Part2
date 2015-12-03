@@ -41,7 +41,6 @@ module mkDCache#(CoreID id)(
         CacheWordSelect sel = getWordSelect(r.addr);
         CacheIndex idx = getIndex(r.addr);
         CacheTag tag = getTag(r.addr);
-        $display("[Cache] Looking for data at (%d, %d)", idx, sel);
 
         // check if in cache
         let hit = False;
@@ -50,7 +49,6 @@ module mkDCache#(CoreID id)(
         if (hit) begin
             if (r.op == Ld) begin
                 $display("[Cache] Load hit");
-                $display("[Cache] Found data %d", dataArray[idx][sel]);
                 hitQ.enq(dataArray[idx][sel]);
             end
             else begin // it is a store
@@ -130,7 +128,9 @@ module mkDCache#(CoreID id)(
         endcase
         
         //FIXME Maybe? create cache line
-        let line = fromMaybe(?, x.data);    
+        CacheLine line;
+        if (isValid(x.data)) line = fromMaybe(?, x.data);
+        else line = dataArray[idx];
         if (missReq.op == St) begin
             line[sel] = missReq.data;
         end
@@ -162,7 +162,7 @@ module mkDCache#(CoreID id)(
     endrule
 
     
-    rule dng (status != Resp && !fromMem.hasResp);
+    rule dng (status != Resp);
         
         $display("[[Cache]] Downgrade response");
         
@@ -172,10 +172,13 @@ module mkDCache#(CoreID id)(
             tagged Req .req : x = req;
         endcase
         
+        
         // calculate cache index
         CacheWordSelect sel = getWordSelect(x.addr);
         CacheIndex idx = getIndex(x.addr);
         let tag = getTag(x.addr);
+        
+
 
         if (privArray[idx] > x.state) begin
 
@@ -183,7 +186,7 @@ module mkDCache#(CoreID id)(
            Maybe#(CacheLine) line;
            if (privArray[idx] == M) line = Valid(dataArray[idx]);
            else line = Invalid;
-           
+
            // Send cache line back to main memory
            let addr = {tag, idx, sel, 2'b0};
            toMem.enq_resp( CacheMemResp {child: id, 
@@ -208,7 +211,6 @@ module mkDCache#(CoreID id)(
 
     method ActionValue#(Data) resp;
         $display("[Cache] Processing response");
-        $display("[Cache] Data response = %d", hitQ.first);
         hitQ.deq;
         return hitQ.first;
     endmethod
