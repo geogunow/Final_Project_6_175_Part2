@@ -41,6 +41,7 @@ module mkDCache#(CoreID id)(
         CacheWordSelect sel = getWordSelect(r.addr);
         CacheIndex idx = getIndex(r.addr);
         CacheTag tag = getTag(r.addr);
+        $display("[Cache] Looking for data at (%d, %d)", idx, sel);
 
         // check if in cache
         let hit = False;
@@ -49,6 +50,7 @@ module mkDCache#(CoreID id)(
         if (hit) begin
             if (r.op == Ld) begin
                 $display("[Cache] Load hit");
+                $display("[Cache] Found data %d", dataArray[idx][sel]);
                 hitQ.enq(dataArray[idx][sel]);
             end
             else begin // it is a store
@@ -126,18 +128,13 @@ module mkDCache#(CoreID id)(
         case (fromMem.first) matches
             tagged Resp .resp : x = resp;
         endcase
-        //FIXME: look here
-        let line = fromMaybe(?, x.data);
-            
-        /// check load
-        if (missReq.op == Ld) begin
-            // enqueue result into hit queue
-            hitQ.enq(line[sel]);
-        end
-        else begin
-            // store
+        
+        //FIXME Maybe? create cache line
+        let line = fromMaybe(?, x.data);    
+        if (missReq.op == St) begin
             line[sel] = missReq.data;
         end
+        dataArray[idx] <= line;
         
         // update cache line tag and privledge
         tagArray[idx] <= tag;
@@ -172,6 +169,7 @@ module mkDCache#(CoreID id)(
 
     method ActionValue#(Data) resp;
         $display("[Cache] Processing response");
+        $display("[Cache] Data response = %d", hitQ.first);
         hitQ.deq;
         return hitQ.first;
     endmethod

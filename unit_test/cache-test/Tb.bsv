@@ -50,6 +50,7 @@ module mkTb(Empty);
 			let resp <- cache.resp;
 			if(resp == data) begin
 				// correct
+                $fwrite(stderr, "Correct : got response %d\n", resp);
 			end
 			else begin
 				// no match!
