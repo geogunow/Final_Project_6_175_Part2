@@ -37,7 +37,7 @@ module mkDCache#(CoreID id)(
         reqQ.deq;
 
         // calculate cache index and tag
-        $display("[Cache] Processing request");
+        $display("[Cache] Processing request core %d", id);
         CacheWordSelect sel = getWordSelect(r.addr);
         CacheIndex idx = getIndex(r.addr);
         CacheTag tag = getTag(r.addr);
@@ -123,7 +123,7 @@ module mkDCache#(CoreID id)(
         CacheIndex idx = getIndex(missReq.addr);
         let tag = getTag(missReq.addr);
         
-        // fill cache line with data
+        // get response
         CacheMemResp x = ?;
         case (fromMem.first) matches
             tagged Resp .resp : x = resp;
@@ -161,6 +161,45 @@ module mkDCache#(CoreID id)(
 
     endrule
 
+    
+    rule dng (status != Resp && !fromMem.hasResp);
+        
+        $display("[[Cache]] Downgrade response");
+        
+        // get response
+        CacheMemReq x = ?;
+        case (fromMem.first) matches
+            tagged Req .req : x = req;
+        endcase
+        
+        // calculate cache index
+        CacheWordSelect sel = getWordSelect(x.addr);
+        CacheIndex idx = getIndex(x.addr);
+        let tag = getTag(x.addr);
+
+        if (privArray[idx] > x.state) begin
+
+           // Determine if a valid cache line needs to write back
+           Maybe#(CacheLine) line;
+           if (privArray[idx] == M) line = Valid(dataArray[idx]);
+           else line = Invalid;
+           
+           // Send cache line back to main memory
+           let addr = {tag, idx, sel, 2'b0};
+           toMem.enq_resp( CacheMemResp {child: id, 
+                                  addr: addr, 
+                                  state: x.state, 
+                                  data: line});
+            
+            // change cache state
+            privArray[idx] <= x.state;
+        end
+
+        // address has been downgraded
+        fromMem.deq;
+    endrule
+ 
+ 
 
     method Action req(MemReq r);
         reqQ.enq(r);
