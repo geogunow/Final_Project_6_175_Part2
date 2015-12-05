@@ -14,12 +14,13 @@ module mkPPP(MessageGet c2m, MessagePut m2c, WideMem mem, Empty ifc);
     Vector#(CoreNum, Vector#(CacheRows, Reg#(Bool))) waitc <- replicateM(replicateM(mkReg(False)));
 
     Reg#(Bool) missReg <- mkReg(False);
+    Reg#(Bool) readyReg <- mkReg(False);
 
     function Bool isCompatible(MSI a, MSI b) = 
         ((a == I || b == I) || (a == S && b == S));
 
 
-    rule parentResp (!c2m.hasResp && !missReg);
+    rule parentResp (!c2m.hasResp && !missReg  && readyReg);
         
         // get request
         let req = c2m.first.Req;
@@ -46,10 +47,12 @@ module mkPPP(MessageGet c2m, MessagePut m2c, WideMem mem, Empty ifc);
         
             // if child state is currently invalid, get proper data to send to
             // child
+            $display("Parent response protocol SAFE");
             MSI s = (childTag[c][idx] == tag)? childState[c][idx] : I;
             if (s != I) begin
                 
                 // enqueue message to core
+                $display("No need for data access");
                 m2c.enq_resp(CacheMemResp {child: c, 
                                       addr:req.addr, 
                                       state:req.state, 
@@ -61,15 +64,18 @@ module mkPPP(MessageGet c2m, MessagePut m2c, WideMem mem, Empty ifc);
             
                 // dequeue response
                 c2m.deq;
+                readyReg <= False;
                 
             end
             else begin
                 // request data from memory
+                $display("Data reqeust sent");
                 mem.req(WideMemReq{
                         write_en: '0,
                         addr: req.addr,
                         data: ? } );
                 missReg <= True;
+                readyReg <= False;
             end
             
         end
@@ -77,9 +83,10 @@ module mkPPP(MessageGet c2m, MessagePut m2c, WideMem mem, Empty ifc);
     endrule
 
 
-    rule dwn (!c2m.hasResp && !missReg);
+    rule dwn (!c2m.hasResp && !missReg && !readyReg);
         
         // get request
+        $display("Parent in dwn protocol");
         let req = c2m.first.Req;
         
         // get index and tag of address
@@ -103,17 +110,22 @@ module mkPPP(MessageGet c2m, MessagePut m2c, WideMem mem, Empty ifc);
         end
 
         if (send_req > -1) begin
+            $display("Downgrade request to core %d", send_req);
             waitc[send_req][idx] <= True;
             m2c.enq_req(CacheMemReq 
                         {child: fromInteger(send_req),
                          addr:req.addr,
                          state: (req.state == M? I:S) } );
         end
+        else begin
+            readyReg <= True;
+        end
     endrule
 
     rule parentDataResp (!c2m.hasResp && missReg);
 
         // get request
+        $display("Parent data response");
         let req = c2m.first.Req;
         
         // get index and tag of address
@@ -146,6 +158,7 @@ module mkPPP(MessageGet c2m, MessagePut m2c, WideMem mem, Empty ifc);
     rule dwnRsp (c2m.hasResp);
 
         // get response
+        $display("Parent got DWN response");
         let resp = c2m.first.Resp;
         c2m.deq;
 
