@@ -42,7 +42,7 @@ endmodule
 (* synthesize *)
 module mkTb(Empty);
     // Set this to true to see more messages displayed to stdout
-    Bool debug = False;
+    Bool debug = True;
 
     MessageFifo#(2) c2pQ <- mkMessageFifo;
     MessageFifo#(2) p2cQ <- mkMessageFifo;

@@ -35,10 +35,9 @@ module mkPPP(MessageGet c2m, MessagePut m2c, WideMem mem, Empty ifc);
         Bool safe = True;
         for (Integer i=0; i < valueOf(CoreNum); i=i+1) begin
             if (fromInteger(i) != c) begin
-                //TODO do we need the waitc condition???
-               if ((!isCompatible(childState[i][idx], req.state)
-                   && childTag[c][idx] == tag) || waitc[c][idx]) begin
-                       safe = False;
+                MSI s = (childTag[i][idx] == tag)? childState[i][idx] : I;
+                if (!isCompatible(s, req.state) || waitc[c][idx]) begin
+                    safe = False;
                 end
             end
         end
@@ -47,7 +46,8 @@ module mkPPP(MessageGet c2m, MessagePut m2c, WideMem mem, Empty ifc);
         
             // if child state is currently invalid, get proper data to send to
             // child
-            if (childTag[c][idx] == tag && childState[c][idx] != I) begin
+            MSI s = (childTag[c][idx] == tag)? childState[c][idx] : I;
+            if (s != I) begin
                 
                 // enqueue message to core
                 m2c.enq_resp(CacheMemResp {child: c, 
@@ -65,7 +65,6 @@ module mkPPP(MessageGet c2m, MessagePut m2c, WideMem mem, Empty ifc);
             end
             else begin
                 // request data from memory
-                Maybe#(CacheLine) resp_data = Invalid;
                 mem.req(WideMemReq{
                         write_en: '0,
                         addr: req.addr,
@@ -91,17 +90,24 @@ module mkPPP(MessageGet c2m, MessagePut m2c, WideMem mem, Empty ifc);
         let c = req.child;
 
         // Look for incompatible children
+        Integer send_req = -1;
         for (Integer i=0; i < valueOf(CoreNum); i=i+1) begin
             if (fromInteger(i) != c) begin
-               if (!isCompatible(childState[i][idx], req.state)
-                   && !waitc[i][idx]) begin
-                        waitc[i][idx] <= True;
-                        m2c.enq_req(CacheMemReq 
-                                    {child: fromInteger(i),
-                                     addr:req.addr,
-                                     state: (req.state == M? I:S) } );
+                MSI s = (childTag[i][idx] == tag)? childState[i][idx] : I;
+                if (!isCompatible(s, req.state) && !waitc[i][idx]) begin
+                    if (send_req == -1) begin
+                        send_req = i;
+                    end
                 end
             end
+        end
+
+        if (send_req > -1) begin
+            waitc[send_req][idx] <= True;
+            m2c.enq_req(CacheMemReq 
+                        {child: fromInteger(send_req),
+                         addr:req.addr,
+                         state: (req.state == M? I:S) } );
         end
     endrule
 
@@ -132,6 +138,7 @@ module mkPPP(MessageGet c2m, MessagePut m2c, WideMem mem, Empty ifc);
     
         // dequeue response
         c2m.deq;
+        missReg <= False;
 
     endrule
 
@@ -149,7 +156,8 @@ module mkPPP(MessageGet c2m, MessagePut m2c, WideMem mem, Empty ifc);
         // get child for convinience
         let c = resp.child;
 
-        if (childState[c][idx] == M) begin
+        MSI s = (childTag[c][idx] == tag)? childState[c][idx] : I;
+        if (s == M) begin
             
             // create enable signal
             Bit#(CacheLineWords) en = '1;
