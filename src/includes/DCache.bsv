@@ -50,11 +50,14 @@ module mkDCache#(CoreID id)(
             if (r.op == Ld) begin
                 $display("[Cache] Load hit");
                 hitQ.enq(dataArray[idx][sel]);
+                refDMem.commit(r, Valid(dataArray[idx]), 
+                                Valid(dataArray[idx][sel]));
             end
             else begin // it is a store
                 if (privArray[idx] == M) begin
                     $display("[Cache] Write hit");
                     dataArray[idx][sel] <= r.data;
+                    refDMem.commit(r, Valid(dataArray[idx]), Invalid);
                 end
                 else begin
                     $display("[Cache] No write privledge");
@@ -93,7 +96,7 @@ module mkDCache#(CoreID id)(
            let addr = {tag, idx, sel, 2'b0};
            toMem.enq_resp( CacheMemResp {child: id, 
                                   addr: addr, 
-                                  state: I, 
+                                  state: I,
                                   data: line});
         end
         status <= SendFillReq;
@@ -127,11 +130,13 @@ module mkDCache#(CoreID id)(
             tagged Resp .resp : x = resp;
         endcase
         
-        //FIXME Maybe? create cache line
+        // create cache line
         CacheLine line;
         if (isValid(x.data)) line = fromMaybe(?, x.data);
         else line = dataArray[idx];
         if (missReq.op == St) begin
+            let old_line = isValid(x.data) ? fromMaybe(?, x.data) : dataArray[idx];
+            refDMem.commit(missReq, Valid(old_line) , Invalid);
             line[sel] = missReq.data;
         end
         dataArray[idx] <= line;
@@ -142,7 +147,7 @@ module mkDCache#(CoreID id)(
         
         // dequeue memory response
         fromMem.deq;
-        
+
         // reset status
         status <= Resp;
     endrule
@@ -154,8 +159,11 @@ module mkDCache#(CoreID id)(
         CacheWordSelect sel = getWordSelect(missReq.addr);
         
         // enqueue load into hit queue
-        //FIXME c2p??
-        if (missReq.op == Ld) hitQ.enq(dataArray[idx][sel]);
+        if (missReq.op == Ld) begin
+            hitQ.enq(dataArray[idx][sel]);
+            refDMem.commit(missReq, Valid(dataArray[idx]), 
+                            Valid(dataArray[idx][sel]));
+        end
         
         status <= Ready;
 
@@ -172,13 +180,11 @@ module mkDCache#(CoreID id)(
             tagged Req .req : x = req;
         endcase
         
-        
         // calculate cache index
         CacheWordSelect sel = getWordSelect(x.addr);
         CacheIndex idx = getIndex(x.addr);
         let tag = getTag(x.addr);
         
-
 
         if (privArray[idx] > x.state) begin
 
@@ -195,7 +201,7 @@ module mkDCache#(CoreID id)(
                                   data: line});
             
             // change cache state
-            privArray[idx] <= x.state;
+            privArray[idx] <= x.state; // FIXME
         end
 
         // address has been downgraded
@@ -206,6 +212,7 @@ module mkDCache#(CoreID id)(
 
     method Action req(MemReq r);
         reqQ.enq(r);
+        refDMem.issue(r);
     endmethod
 
 

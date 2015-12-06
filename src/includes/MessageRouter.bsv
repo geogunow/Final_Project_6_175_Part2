@@ -12,6 +12,8 @@ module mkMessageRouter(
         Empty ifc 
 	);
 
+    Reg#(CoreID) start_core <- mkReg(0);
+
     rule core2mem;
 
         // pick core, prioritize response
@@ -19,6 +21,8 @@ module mkMessageRouter(
         Integer core_select = -1;
         Bool found_resp = False;
         for (Integer i=0; i<valueOf(CoreNum); i=i+1) begin
+            
+            Integer core_id = mod(fromInteger(i) + start_core, valueOf(CoreNum));
 
             if (c2r[i].notEmpty) begin
                 CacheMemMessage x = c2r[i].first;
@@ -41,6 +45,9 @@ module mkMessageRouter(
             endcase
             c2r[core_select].deq;
         end
+
+        if (start_core == valueOf(CoreNum) - 1) start_core <= 0;
+        else start_core <= start_core + 1;
     endrule
 
     rule mem2core;
