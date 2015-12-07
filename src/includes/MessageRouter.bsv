@@ -13,31 +13,40 @@ module mkMessageRouter(
 	);
 
     Reg#(CoreID) start_core <- mkReg(0);
+    CoreID max_core = fromInteger(valueOf(CoreNum) - 1);
 
     rule core2mem;
 
         // pick core, prioritize response
         // round robin - use cycle number or keep a local variable?
-        Integer core_select = -1;
+        CoreID core_select = 0;
+        Bool found_msg = False;
         Bool found_resp = False;
         for (Integer i=0; i<valueOf(CoreNum); i=i+1) begin
             
-            Integer core_id = mod(fromInteger(i) + start_core, valueOf(CoreNum));
+            CoreID core_iter;
+            if (start_core <= max_core - fromInteger(i))
+                core_iter = start_core + fromInteger(i);
+            else
+                core_iter = start_core - fromInteger(valueOf(CoreNum) - i);
 
-            if (c2r[i].notEmpty) begin
-                CacheMemMessage x = c2r[i].first;
+
+            if (c2r[core_iter].notEmpty) begin
+                CacheMemMessage x = c2r[core_iter].first;
                 if (x matches tagged Resp .r &&& !found_resp) begin
-                    core_select = i;
+                    core_select = core_iter;
                     found_resp = True;
+                    found_msg = True;
                 end
-                else if (core_select == -1) begin
-                    core_select = i;
+                else if (!found_msg) begin
+                    core_select = core_iter;
+                    found_msg = True;
                 end
             end
         end
-        
+
         // transfer message to memory
-        if (core_select >= 0) begin
+        if (found_msg) begin
             CacheMemMessage x = c2r[core_select].first;
             case (x) matches
                 tagged Resp .resp : r2m.enq_resp(resp);
@@ -46,7 +55,7 @@ module mkMessageRouter(
             c2r[core_select].deq;
         end
 
-        if (start_core == valueOf(CoreNum) - 1) start_core <= 0;
+        if (start_core == max_core) start_core <= 0;
         else start_core <= start_core + 1;
     endrule
 
