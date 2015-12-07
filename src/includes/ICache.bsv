@@ -1,10 +1,12 @@
 import CacheTypes::*;
-import Vector::*;
-import MemTypes::*;
 import Types::*;
 import ProcTypes::*;
 import Fifo::*;
-import Ehr::*;
+import Vector::*;
+import MemTypes::*;
+import MemUtil::*;
+import SimMem::*;
+
 
 typedef enum{Ready, StartMiss, SendFillReq, WaitFillResp} CacheStatus 
     deriving(Eq, Bits);
