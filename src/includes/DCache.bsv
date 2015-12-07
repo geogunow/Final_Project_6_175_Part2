@@ -30,6 +30,9 @@ module mkDCache#(CoreID id)(
     Fifo#(1, MemReq) reqQ <- mkBypassFifo;
     Reg#(MemReq) missReq <- mkRegU;
 
+    // for LR/SC, which enable atomic memory access for multicore cooperation
+    Reg#(Maybe#(CacheLineAddr)) linkAddr <- mkReg(Invalid);
+
     rule doReq (status == Ready);
 
         // get request from queue
@@ -37,7 +40,7 @@ module mkDCache#(CoreID id)(
         reqQ.deq;
 
         // calculate cache index and tag
-        $display("[Cache] Processing request core %d", id);
+        //$display("[Cache] Processing request core %d", id);
         CacheWordSelect sel = getWordSelect(r.addr);
         CacheIndex idx = getIndex(r.addr);
         CacheTag tag = getTag(r.addr);
@@ -48,26 +51,65 @@ module mkDCache#(CoreID id)(
 
         if (hit) begin
             if (r.op == Ld) begin
-                $display("[Cache] Load hit");
+                //$display("[Cache] Load hit");
                 hitQ.enq(dataArray[idx][sel]);
                 refDMem.commit(r, Valid(dataArray[idx]), 
                                 Valid(dataArray[idx][sel]));
+            end 
+            // Lr hit
+            else if (r.op == Lr) begin
+                $display("[Cache] Load-reserve hit");
+                hitQ.enq(dataArray[idx][sel);
+                refDMem.commit(r, Valid(dataArray[idx]),
+                                Valid(dataArray[idx][sel]));
+                linkAddr <= tagged Valid getLineAddr(r.addr);
             end
-            else begin // it is a store
+            // Sc hit TODO Sc miss
+            else if (r.op == Sc) begin
+                $display("[Cache] Store-conditional hit");
+                let reserved_addr = getLineAddr(r.addr);
+                if isValid(linkAddr) begin
+                    if (fromMaybe(?, linkAddr)) == reserved_addr begin
+                        // process as normal store request
+                        $display("[Cache] Store-conditional address OK");
+                        if (privArray[idx] == M) begin
+                            //$display("[Cache] Write hit");
+                            dataArray[idx][sel] <= r.data;
+                            refDMem.commit(r, Valid(dataArray[idx]), Invalid);
+                            // TODO directly respond to core with value scSucc
+                        end
+                        else begin
+                            $display("[Cache] No write privledge");
+                            missReq <= r;
+                            status <= SendFillReq;
+                        end
+                    end else begin
+                        $display("[Cache] Sc address does not match linkAddr");
+                        // TODO directly respond to core with value scFail
+                    end
+                end
+                else begin
+                    //$display("[Cache] linkAddr not valid");
+                    // TODO directly respond to core with value scFail
+                end
+                // regardless of success, linkAddr no longer valid
+                linkAddr <= tagged Invalid;
+            end
+            else begin // store
                 if (privArray[idx] == M) begin
-                    $display("[Cache] Write hit");
+                    //$display("[Cache] Write hit");
                     dataArray[idx][sel] <= r.data;
                     refDMem.commit(r, Valid(dataArray[idx]), Invalid);
                 end
                 else begin
-                    $display("[Cache] No write privledge");
+                    //$display("[Cache] No write privledge");
                     missReq <= r;
                     status <= SendFillReq;
                 end
             end
         end
         else begin
-            $display("[Cache] Cache miss");
+            //$display("[Cache] Cache miss");
             missReq <= r;
             status <= StartMiss;
         end
@@ -77,7 +119,7 @@ module mkDCache#(CoreID id)(
     rule startMiss (status == StartMiss);
 
         // calculate cache index and tag
-        $display("[[Cache]] Start Miss");
+        //$display("[[Cache]] Start Miss");
         CacheWordSelect sel = getWordSelect(missReq.addr);
         CacheIndex idx = getIndex(missReq.addr);
         let tag = tagArray[idx];
@@ -106,10 +148,10 @@ module mkDCache#(CoreID id)(
 
     rule sendFillReq (status == SendFillReq);
 
-        $display("[[Cache]] Send Fill Request");
+        //$display("[[Cache]] Send Fill Request");
 
         // send upgrade request, S if load; otherwise M
-        let upg = (missReq.op == Ld)? S : M;
+        let upg = (missReq.op == (Ld || Lr))? S : M;
         toMem.enq_req( CacheMemReq {child: id, addr:missReq.addr, state: upg});
         status <= WaitFillResp;
 
@@ -119,7 +161,7 @@ module mkDCache#(CoreID id)(
     rule waitFillResp (status == WaitFillResp && fromMem.hasResp);
         
         // calculate cache index and tag
-        $display("[[Cache]] Wait Fill Response");
+        //$display("[[Cache]] Wait Fill Response");
         CacheWordSelect sel = getWordSelect(missReq.addr);
         CacheIndex idx = getIndex(missReq.addr);
         let tag = getTag(missReq.addr);
@@ -164,6 +206,12 @@ module mkDCache#(CoreID id)(
             refDMem.commit(missReq, Valid(dataArray[idx]), 
                             Valid(dataArray[idx][sel]));
         end
+        else if (missReq.op == Lr) begin
+            hitQ.enq(dataArray[idx][sel]);
+            refDMem.commit(missReq, Valid(dataArray[idx]),
+                            Valid(dataArray[idx][sel));
+            linkAddr <= tagged Valid getLineAddr(missReq.addr);
+        end
         
         status <= Ready;
 
@@ -172,7 +220,7 @@ module mkDCache#(CoreID id)(
     
     rule dng (status != Resp);
         
-        $display("[[Cache]] Downgrade response");
+        //$display("[[Cache]] Downgrade response");
         
         // get response
         CacheMemReq x = ?;
@@ -201,7 +249,7 @@ module mkDCache#(CoreID id)(
                                   data: line});
             
             // change cache state
-            privArray[idx] <= x.state; // FIXME
+            privArray[idx] <= x.state;
         end
 
         // address has been downgraded
@@ -217,7 +265,7 @@ module mkDCache#(CoreID id)(
 
 
     method ActionValue#(Data) resp;
-        $display("[Cache] Processing response");
+        //$display("[Cache] Processing response");
         hitQ.deq;
         return hitQ.first;
     endmethod
