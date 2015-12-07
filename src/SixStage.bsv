@@ -15,12 +15,16 @@ import ClientServer::*;
 import Memory::*;
 import ICache::*;
 import DCache::*;
+import DCacheStQ::*;
+import DCacheLHUSM::*;
 import CacheTypes::*;
 import WideMemInit::*;
 import MemUtil::*;
 import Vector::*;
 import FShow::*;
 import MemReqIDGen::*;
+import RefTypes::*;
+import MessageFifo::*;
 
 // Data structure for Instruction Fetch to Decode stage
 typedef struct {
@@ -65,30 +69,20 @@ typedef struct {
 } Redirect deriving (Bits, Eq);
 
 
-(* synthesize *)
-module mkCore#(CoreID id) (
-  WideMem iCache,
-  RefDMem refDMem,
-  Core ifc
+//(* synthesize *)
+module mkCore(
+                CoreID id,
+                WideMem iMem,
+                RefDMem refDMem,
+                Core ifc
 );
     Ehr#(2, Addr) pcReg <- mkEhr(?);
     RFile            rf <- mkRFile;
     CsrFile        csrf <- mkCsrFile(id);
 
-    // mem req id
-    MemReqIDGen memReqIDGen <- mkMemReqIDGen;
-
-    // wrap DDR3 to WideMem interface
-    WideMem wideMemWrapper <- mkWideMemFromDDR3( ddr3ReqFifo, ddr3RespFifo );
-	
-    // split WideMem interface to two (use it in a multiplexed way) 
-	// This spliter only take action after reset (i.e. memReady && csrf.started)
-	// otherwise the guard may fail, and we get garbage DDR3 resp
-    Vector#(2, WideMem) wideMems <- mkSplitWideMem( memReady && csrf.started, 
-                                                    wideMemWrapper );
 
 	// Memory initialization
-    ICache iCache <- mkICache(iCache);
+    ICache iCache <- mkICache(iMem);
 
     MessageFifo#(2) toParentQ <- mkMessageFifo;
     MessageFifo#(2) fromParentQ <- mkMessageFifo;
@@ -106,6 +100,9 @@ module mkCore#(CoreID id) (
     );
 
   
+    // mem req id
+    MemReqIDGen memReqIDGen <- mkMemReqIDGen;
+    
     // Branch prediction structures 
     Scoreboard#(6)   sb <- mkCFScoreboard;
     Btb#(6)         btb <- mkBtb; // 64-entry BTB
@@ -125,12 +122,6 @@ module mkCore#(CoreID id) (
 	Fifo#(2, Fetch2Execute) rf2e <- mkCFFifo;
 	Fifo#(2, Execute2WriteBack) e2m <- mkCFFifo;
 	Fifo#(2, Execute2WriteBack) m2wb <- mkCFFifo;
-
-
-	// some garbage may get into ddr3RespFifo during soft reset
-    rule drainMemResponses( !csrf.started );
-        ddr3RespFifo.deq;
-    endrule
 
 
     rule doInstructionFetch(csrf.started);
@@ -325,7 +316,7 @@ module mkCore#(CoreID id) (
                 let rid <- memReqIDGen.getID;
                 dCache.req(MemReq{op: Lr, addr: eInst.addr, data: ?, rid: rid});
                 $display("Memory: At pc %x, LR %x", dMsg.pc, eInst.addr);
-            end else if(eInst.iType == Sr) begin
+            end else if(eInst.iType == Sc) begin
                 let rid <- memReqIDGen.getID;
                 dCache.req(MemReq{op: St, addr: eInst.addr, data: eInst.data, rid: rid});
                 $display("Memory: At pc %x, SR %x", dMsg.pc, eInst.addr);
@@ -415,7 +406,7 @@ module mkCore#(CoreID id) (
 
     method Bool cpuToHostValid = csrf.cpuToHostValid;
 
-    method Action hostToCpu(Bit#(32) startpc) if ( !csrf.started && memReady && !ddr3RespFifo.notEmpty );
+    method Action hostToCpu(Bit#(32) startpc) if ( !csrf.started );
         csrf.start(); // only 1 core, id = 0
         pcReg[0] <= startpc;
     endmethod
