@@ -12,7 +12,8 @@ asm_tests=(
   )
 
 asm_tests=(
-	simple
+    cache
+    simple
     add addi
 	and andi
 	auipc

@@ -40,7 +40,6 @@ module mkDCache#(CoreID id)(
         reqQ.deq;
 
         // calculate cache index and tag
-        //$display("[Cache] Processing request core %d", id);
         CacheWordSelect sel = getWordSelect(r.addr);
         CacheIndex idx = getIndex(r.addr);
         CacheTag tag = getTag(r.addr);
@@ -50,7 +49,7 @@ module mkDCache#(CoreID id)(
         if (tagArray[idx] == tag && privArray[idx] > I) hit = True;
 
         // check whether to proceed in store conditional
-        Bool proceed = False;
+        let proceed = False;
         if (r.op == Sc) begin
             if (isValid(linkAddr)) begin
                 if (fromMaybe(?, linkAddr) == getLineAddr(r.addr)) begin
@@ -73,7 +72,6 @@ module mkDCache#(CoreID id)(
                     hitQ.enq(dataArray[idx][sel]);
                     refDMem.commit(r, Valid(dataArray[idx]), 
                                     Valid(dataArray[idx][sel]));
-                    
                     if (r.op == Lr) begin
                         linkAddr <= tagged Valid getLineAddr(r.addr);
                     end
@@ -96,7 +94,7 @@ module mkDCache#(CoreID id)(
             end
             else begin
                 missReq <= r;
-                status <= SendFillReq;
+                status <= StartMiss;
             end
         end
                         
@@ -168,7 +166,7 @@ module mkDCache#(CoreID id)(
         Bool check = False;
         if (missReq.op == St) begin
             let old_line = isValid(x.data) ? fromMaybe(?, x.data) : dataArray[idx];
-            refDMem.commit(missReq, Valid(old_line) , Invalid);
+            refDMem.commit(missReq, Valid(old_line), Invalid);
             line[sel] = missReq.data;
         end
         else if (missReq.op == Sc) begin
@@ -176,7 +174,7 @@ module mkDCache#(CoreID id)(
                 fromMaybe(?, linkAddr) == getLineAddr(missReq.addr)) begin
 
                 let old_line = fromMaybe(?, x.data);
-                refDMem.commit(missReq, Valid(old_line) , Valid(scSucc));
+                refDMem.commit(missReq, Valid(old_line), Valid(scSucc));
                 line[sel] = missReq.data;
                 hitQ.enq(scSucc);
 
@@ -195,7 +193,7 @@ module mkDCache#(CoreID id)(
                fromMaybe(?, linkAddr) == getLineAddr(x.addr)) begin
                linkAddr <= Invalid;
            end
-       end
+        end
         
         // dequeue memory response
         fromMem.deq;
