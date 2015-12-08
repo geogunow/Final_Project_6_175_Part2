@@ -89,6 +89,7 @@ module mkDCache#(CoreID id)(
                     $display("[Cache] Sc address does not match linkAddr");
                     // directly respond to core with value scFail
                     hitQ.enq(scFail);
+                    refDMem.commit(r, Invalid, Valid(scFail));
                 end
                 // regardless of success, linkAddr no longer valid
                 linkAddr <= tagged Invalid;
@@ -96,6 +97,14 @@ module mkDCache#(CoreID id)(
             else begin // store
                 if (privArray[idx] == M) begin
                     //$display("[Cache] Write hit");
+                    // check whether by evicting old line, we must also invalidate linkAddr
+                    CacheLineAddr reserved_addr = getLineAddr(missReq.addr);
+                    if (linkAddr matches tagged Valid .la) begin
+                        if (la == reserved_addr) begin
+                            linkAddr <= tagged Invalid;
+                            $display("[Cache] St address matches la; la invalidated");
+                        end
+                    end
                     dataArray[idx][sel] <= r.data;
                     refDMem.commit(r, Valid(dataArray[idx]), Invalid);
                 end
@@ -200,6 +209,7 @@ module mkDCache#(CoreID id)(
                 else begin
                     $display("[Cache] Sc address does not match linkAddr");
                     // respond to core with value scFail
+                    refDMem.commit(missReq, Invalid, Valid(scFail));
                     hitQ.enq(scFail);
                 end
             end

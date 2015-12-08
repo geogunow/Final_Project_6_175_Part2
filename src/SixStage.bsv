@@ -318,7 +318,7 @@ module mkCore(
                 $display("Memory: At pc %x, LR %x", dMsg.pc, eInst.addr);
             end else if(eInst.iType == Sc) begin
                 let rid <- memReqIDGen.getID;
-                dCache.req(MemReq{op: St, addr: eInst.addr, data: eInst.data, rid: rid});
+                dCache.req(MemReq{op: Sc, addr: eInst.addr, data: eInst.data, rid: rid});
                 $display("Memory: At pc %x, SR %x", dMsg.pc, eInst.addr);
             end else if(eInst.iType == Fence) begin
                 let rid <- memReqIDGen.getID;
@@ -354,8 +354,7 @@ module mkCore(
             end else if(eInst.iType == Lr) begin
                 eInst.data <- dCache.resp();
             end else if(eInst.iType == Sc) begin
-                // maybe a TODO: get result of Sc attempt and deal with
-                // reprecussions if it failed?
+                eInst.data <- dCache.resp();
             end
             
             // check unsupported instruction at commit time. Exiting
