@@ -261,6 +261,7 @@ module mkDCache#(CoreID id)(
             
             // change cache state
             privArray[idx] <= x.state;
+            if (x.state == I) linkAddr <= Invalid;
         end
 
         // address has been downgraded
