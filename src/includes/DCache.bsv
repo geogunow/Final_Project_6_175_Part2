@@ -49,77 +49,63 @@ module mkDCache#(CoreID id)(
         let hit = False;
         if (tagArray[idx] == tag && privArray[idx] > I) hit = True;
 
-        if (hit) begin
-            if (r.op == Ld) begin
-                //$display("[Cache] Load hit");
-                hitQ.enq(dataArray[idx][sel]);
-                refDMem.commit(r, Valid(dataArray[idx]), 
-                                Valid(dataArray[idx][sel]));
-            end 
-            // Lr hit
-            else if (r.op == Lr) begin
-                $display("[Cache] Load-reserve hit");
-                hitQ.enq(dataArray[idx][sel);
-                refDMem.commit(r, Valid(dataArray[idx]),
-                                Valid(dataArray[idx][sel]));
-                linkAddr <= tagged Valid getLineAddr(r.addr);
-            end
-            // Sc hit TODO Sc miss
-            else if (r.op == Sc) begin
-                $display("[Cache] Store-conditional hit");
-                let reserved_addr = getLineAddr(r.addr);
-                if isValid(linkAddr) begin
-                    if (fromMaybe(?, linkAddr)) == reserved_addr begin
-                        // process as normal store request
-                        $display("[Cache] Store-conditional address OK");
-                        if (privArray[idx] == M) begin
-                            //$display("[Cache] Write hit");
-                            dataArray[idx][sel] <= r.data;
-                            refDMem.commit(r, Valid(dataArray[idx]), Invalid);
-                            // TODO directly respond to core with value scSucc
-                        end
-                        else begin
-                            $display("[Cache] No write privledge");
-                            missReq <= r;
-                            status <= SendFillReq;
-                        end
-                    end else begin
-                        $display("[Cache] Sc address does not match linkAddr");
-                        // TODO directly respond to core with value scFail
-                    end
-                end
-                else begin
-                    //$display("[Cache] linkAddr not valid");
-                    // TODO directly respond to core with value scFail
+        // check whether to proceed in store conditional
+        Bool proceed = False;
+        if (r.op == Sc) begin
+            if (isValid(linkAddr)) begin
+                if (fromMaybe(?, linkAddr) == getLineAddr(r.addr)) begin
+                    proceed = True;
                 end
                 // regardless of success, linkAddr no longer valid
                 linkAddr <= tagged Invalid;
             end
-            else begin // store
-                if (privArray[idx] == M) begin
-                    //$display("[Cache] Write hit");
-                    dataArray[idx][sel] <= r.data;
-                    refDMem.commit(r, Valid(dataArray[idx]), Invalid);
-                end
-                else begin
-                    //$display("[Cache] No write privledge");
-                    missReq <= r;
-                    status <= SendFillReq;
-                end
-            end
+        end
+        else proceed = True;
+
+
+        if (!proceed) begin
+            hitQ.enq(scFail);
+            refDMem.commit(r, Invalid, Valid(scFail));
         end
         else begin
-            //$display("[Cache] Cache miss");
-            missReq <= r;
-            status <= StartMiss;
+            if (hit) begin
+                if (r.op == Ld || r.op == Lr) begin
+                    hitQ.enq(dataArray[idx][sel]);
+                    refDMem.commit(r, Valid(dataArray[idx]), 
+                                    Valid(dataArray[idx][sel]));
+                    
+                    if (r.op == Lr) begin
+                        linkAddr <= tagged Valid getLineAddr(r.addr);
+                    end
+                end 
+                else begin
+                    // Store (Sc or St)
+                    if (privArray[idx] == M) begin
+                        dataArray[idx][sel] <= r.data;
+                        if (r.op == Sc) begin
+                            hitQ.enq(scSucc);
+                            refDMem.commit(r, Valid(dataArray[idx]), Valid(scSucc));
+                        end
+                        else refDMem.commit(r, Valid(dataArray[idx]), Invalid);
+                    end
+                    else begin
+                        missReq <= r;
+                        status <= SendFillReq;
+                    end
+                end
+            end
+            else begin
+                missReq <= r;
+                status <= SendFillReq;
+            end
         end
+                        
     endrule
 
 
     rule startMiss (status == StartMiss);
 
         // calculate cache index and tag
-        //$display("[[Cache]] Start Miss");
         CacheWordSelect sel = getWordSelect(missReq.addr);
         CacheIndex idx = getIndex(missReq.addr);
         let tag = tagArray[idx];
@@ -128,6 +114,10 @@ module mkDCache#(CoreID id)(
            
            // Invalidate cache line
            privArray[idx] <= I;
+           if (isValid(linkAddr) && 
+               fromMaybe(?, linkAddr) == getLineAddr(missReq.addr)) begin
+               linkAddr <= Invalid;
+           end
 
            // Determine if a valid cache line needs to write back
            Maybe#(CacheLine) line;
@@ -148,10 +138,8 @@ module mkDCache#(CoreID id)(
 
     rule sendFillReq (status == SendFillReq);
 
-        //$display("[[Cache]] Send Fill Request");
-
         // send upgrade request, S if load; otherwise M
-        let upg = (missReq.op == (Ld || Lr))? S : M;
+        let upg = (missReq.op == Ld || missReq.op == Lr)? S : M;
         toMem.enq_req( CacheMemReq {child: id, addr:missReq.addr, state: upg});
         status <= WaitFillResp;
 
@@ -159,9 +147,8 @@ module mkDCache#(CoreID id)(
 
 
     rule waitFillResp (status == WaitFillResp && fromMem.hasResp);
-        
+       
         // calculate cache index and tag
-        //$display("[[Cache]] Wait Fill Response");
         CacheWordSelect sel = getWordSelect(missReq.addr);
         CacheIndex idx = getIndex(missReq.addr);
         let tag = getTag(missReq.addr);
@@ -176,16 +163,39 @@ module mkDCache#(CoreID id)(
         CacheLine line;
         if (isValid(x.data)) line = fromMaybe(?, x.data);
         else line = dataArray[idx];
+
+        // check 
+        Bool check = False;
         if (missReq.op == St) begin
             let old_line = isValid(x.data) ? fromMaybe(?, x.data) : dataArray[idx];
             refDMem.commit(missReq, Valid(old_line) , Invalid);
             line[sel] = missReq.data;
+        end
+        else if (missReq.op == Sc) begin
+            if (isValid(linkAddr) && 
+                fromMaybe(?, linkAddr) == getLineAddr(missReq.addr)) begin
+
+                let old_line = fromMaybe(?, x.data);
+                refDMem.commit(missReq, Valid(old_line) , Valid(scSucc));
+                line[sel] = missReq.data;
+                hitQ.enq(scSucc);
+
+            end
+            else begin
+                hitQ.enq(scFail);
+            end
         end
         dataArray[idx] <= line;
         
         // update cache line tag and privledge
         tagArray[idx] <= tag;
         privArray[idx] <= x.state;
+        if (x.state == I) begin
+           if (isValid(linkAddr) && 
+               fromMaybe(?, linkAddr) == getLineAddr(x.addr)) begin
+               linkAddr <= Invalid;
+           end
+       end
         
         // dequeue memory response
         fromMem.deq;
@@ -201,16 +211,14 @@ module mkDCache#(CoreID id)(
         CacheWordSelect sel = getWordSelect(missReq.addr);
         
         // enqueue load into hit queue
-        if (missReq.op == Ld) begin
+        if (missReq.op == Ld || missReq.op == Lr) begin
             hitQ.enq(dataArray[idx][sel]);
             refDMem.commit(missReq, Valid(dataArray[idx]), 
                             Valid(dataArray[idx][sel]));
-        end
-        else if (missReq.op == Lr) begin
-            hitQ.enq(dataArray[idx][sel]);
-            refDMem.commit(missReq, Valid(dataArray[idx]),
-                            Valid(dataArray[idx][sel));
-            linkAddr <= tagged Valid getLineAddr(missReq.addr);
+            
+            if (missReq.op == Lr) begin
+                linkAddr <= tagged Valid getLineAddr(missReq.addr);
+            end
         end
         
         status <= Ready;
@@ -219,8 +227,6 @@ module mkDCache#(CoreID id)(
 
     
     rule dng (status != Resp);
-        
-        //$display("[[Cache]] Downgrade response");
         
         // get response
         CacheMemReq x = ?;
@@ -250,6 +256,12 @@ module mkDCache#(CoreID id)(
             
             // change cache state
             privArray[idx] <= x.state;
+            if (x.state == I) begin
+               if (isValid(linkAddr) && 
+                   fromMaybe(?, linkAddr) == getLineAddr(x.addr)) begin
+                   linkAddr <= Invalid;
+               end
+           end
         end
 
         // address has been downgraded
@@ -265,7 +277,6 @@ module mkDCache#(CoreID id)(
 
 
     method ActionValue#(Data) resp;
-        //$display("[Cache] Processing response");
         hitQ.deq;
         return hitQ.first;
     endmethod
