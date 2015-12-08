@@ -351,6 +351,11 @@ module mkCore(
             // get memory response if applicable
             if(eInst.iType == Ld) begin
                 eInst.data <- dCache.resp();
+            end else if(eInst.iType == Lr) begin
+                eInst.data <- dCache.resp();
+            end else if(eInst.iType == Sc) begin
+                // maybe a TODO: get result of Sc attempt and deal with
+                // reprecussions if it failed?
             end
             
             // check unsupported instruction at commit time. Exiting

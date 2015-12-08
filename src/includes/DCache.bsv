@@ -32,6 +32,8 @@ module mkDCache#(CoreID id)(
 
     // for LR/SC, which enable atomic memory access for multicore cooperation
     Reg#(Maybe#(CacheLineAddr)) linkAddr <- mkReg(Invalid);
+    // for alerting processor whether Sc failed or succeeded
+    Fifo#(2, Data) scStateQ <-mkBypassFifo;
 
     rule doReq (status == Ready);
 
@@ -59,38 +61,34 @@ module mkDCache#(CoreID id)(
             // Lr hit
             else if (r.op == Lr) begin
                 $display("[Cache] Load-reserve hit");
-                hitQ.enq(dataArray[idx][sel);
+                hitQ.enq(dataArray[idx][sel]);
                 refDMem.commit(r, Valid(dataArray[idx]),
                                 Valid(dataArray[idx][sel]));
                 linkAddr <= tagged Valid getLineAddr(r.addr);
             end
-            // Sc hit TODO Sc miss
+            // Sc hit handling
             else if (r.op == Sc) begin
                 $display("[Cache] Store-conditional hit");
                 let reserved_addr = getLineAddr(r.addr);
-                if isValid(linkAddr) begin
-                    if (fromMaybe(?, linkAddr)) == reserved_addr begin
-                        // process as normal store request
-                        $display("[Cache] Store-conditional address OK");
-                        if (privArray[idx] == M) begin
-                            //$display("[Cache] Write hit");
-                            dataArray[idx][sel] <= r.data;
-                            refDMem.commit(r, Valid(dataArray[idx]), Invalid);
-                            // TODO directly respond to core with value scSucc
-                        end
-                        else begin
-                            $display("[Cache] No write privledge");
-                            missReq <= r;
-                            status <= SendFillReq;
-                        end
-                    end else begin
-                        $display("[Cache] Sc address does not match linkAddr");
-                        // TODO directly respond to core with value scFail
+                if (linkAddr matches tagged Valid .la) begin
+                    // process as normal store request
+                    $display("[Cache] Store-conditional address OK");
+                    if (privArray[idx] == M) begin
+                        $display("[Cache] Sc hit");
+                        dataArray[idx][sel] <= r.data;
+                        refDMem.commit(r, Valid(dataArray[idx]), Valid(scSucc));
+                        // respond to core with value scSucc
+                        hitQ.enq(scSucc);
                     end
-                end
-                else begin
-                    //$display("[Cache] linkAddr not valid");
-                    // TODO directly respond to core with value scFail
+                    else begin
+                        $display("[Cache] No write privledge");
+                        missReq <= r;
+                        status <= SendFillReq;
+                    end
+                end else begin
+                    $display("[Cache] Sc address does not match linkAddr");
+                    // directly respond to core with value scFail
+                    hitQ.enq(scFail);
                 end
                 // regardless of success, linkAddr no longer valid
                 linkAddr <= tagged Invalid;
@@ -151,7 +149,7 @@ module mkDCache#(CoreID id)(
         //$display("[[Cache]] Send Fill Request");
 
         // send upgrade request, S if load; otherwise M
-        let upg = (missReq.op == (Ld || Lr))? S : M;
+        let upg = ((missReq.op == Ld) || (missReq.op == Lr))? S : M;
         toMem.enq_req( CacheMemReq {child: id, addr:missReq.addr, state: upg});
         status <= WaitFillResp;
 
@@ -176,11 +174,38 @@ module mkDCache#(CoreID id)(
         CacheLine line;
         if (isValid(x.data)) line = fromMaybe(?, x.data);
         else line = dataArray[idx];
+        CacheLineAddr reserved_addr = getLineAddr(missReq.addr);
         if (missReq.op == St) begin
             let old_line = isValid(x.data) ? fromMaybe(?, x.data) : dataArray[idx];
-            refDMem.commit(missReq, Valid(old_line) , Invalid);
+            // check whether by evicting old line, we must also invalidate linkAddr
+            if (linkAddr matches tagged Valid .la) begin
+                if (la == reserved_addr) begin
+                    linkAddr <= tagged Invalid;
+                end
+            end
+            refDMem.commit(missReq, Valid(old_line), Invalid);
             line[sel] = missReq.data;
         end
+        // Sc miss handling
+        else if (missReq.op == Sc) begin
+            CacheLineAddr reserved_addr = getLineAddr(missReq.addr);
+            if (linkAddr matches tagged Valid .la) begin
+                if (la == reserved_addr) begin
+                    $display("[Cache] Sc success");
+                    line[sel] = missReq.data;
+                    refDMem.commit(missReq, Valid(dataArray[idx]), Valid(scSucc));
+                    // respond to core with value scSucc
+                    hitQ.enq(scSucc);
+                end
+                else begin
+                    $display("[Cache] Sc address does not match linkAddr");
+                    // respond to core with value scFail
+                    hitQ.enq(scFail);
+                end
+            end
+            linkAddr <= tagged Invalid;
+        end
+                        
         dataArray[idx] <= line;
         
         // update cache line tag and privledge
@@ -195,7 +220,7 @@ module mkDCache#(CoreID id)(
     endrule
 
 
-    rule sendProc (status == Resp);
+    rule sendCore (status == Resp);
         
         CacheIndex idx = getIndex(missReq.addr);
         CacheWordSelect sel = getWordSelect(missReq.addr);
@@ -209,7 +234,7 @@ module mkDCache#(CoreID id)(
         else if (missReq.op == Lr) begin
             hitQ.enq(dataArray[idx][sel]);
             refDMem.commit(missReq, Valid(dataArray[idx]),
-                            Valid(dataArray[idx][sel));
+                            Valid(dataArray[idx][sel]));
             linkAddr <= tagged Valid getLineAddr(missReq.addr);
         end
         
