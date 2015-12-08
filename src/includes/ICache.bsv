@@ -34,6 +34,10 @@ module mkICache(WideMem mem, ICache ifc);
 
     rule sendFillReq (status == StartMiss);
 
+<<<<<<< HEAD
+=======
+        //$display("[[ICache]] Send Fill Request");
+>>>>>>> 6a4fe686aa91968d3a8e42df723da5a45a4a0f2e
         memReqQ.enq(MemReq {op: Ld, addr: missAddr, data:?});
         status <= WaitFillResp;
 
@@ -43,6 +47,10 @@ module mkICache(WideMem mem, ICache ifc);
     rule waitFillResp (status == WaitFillResp);
         
         // calculate cache index and tag
+<<<<<<< HEAD
+=======
+        //$display("[[ICache]] Wait Fill Response");
+>>>>>>> 6a4fe686aa91968d3a8e42df723da5a45a4a0f2e
         CacheWordSelect sel = getWord(missAddr);
         CacheIndex idx = getIndex(missAddr);
         let tag = getTag(missAddr);
@@ -66,6 +74,10 @@ module mkICache(WideMem mem, ICache ifc);
     rule sendToMemory;
 
         // dequeue to get DRAM request
+<<<<<<< HEAD
+=======
+        //$display("[[ICache]] Sending to DRAM");
+>>>>>>> 6a4fe686aa91968d3a8e42df723da5a45a4a0f2e
         memReqQ.deq;
         let r = memReqQ.first;
 
@@ -90,6 +102,10 @@ module mkICache(WideMem mem, ICache ifc);
     rule getFromMemory;
 
         // get DRAM response
+<<<<<<< HEAD
+=======
+        //$display("[[ICache]] Getting from DRAM");
+>>>>>>> 6a4fe686aa91968d3a8e42df723da5a45a4a0f2e
         let line <- mem.resp();
         memRespQ.enq(line);
     
@@ -99,6 +115,10 @@ module mkICache(WideMem mem, ICache ifc);
     method Action req(Addr a) if (status == Ready);
     
         // calculate cache index and tag
+<<<<<<< HEAD
+=======
+        //$display("[ICache] Processing request");
+>>>>>>> 6a4fe686aa91968d3a8e42df723da5a45a4a0f2e
         CacheWordSelect sel = getWord(a);
         CacheIndex idx = getIndex(a);
         CacheTag tag = getTag(a);
@@ -110,9 +130,17 @@ module mkICache(WideMem mem, ICache ifc);
 
         // check load
         if (hit) begin
+<<<<<<< HEAD
             hitQ.enq(dataArray[idx][sel]);
         end
         else begin
+=======
+            //$display("[ICache] Load hit");
+            hitQ.enq(dataArray[idx][sel]);
+        end
+        else begin
+            //$display("[ICache] Load miss");
+>>>>>>> 6a4fe686aa91968d3a8e42df723da5a45a4a0f2e
             missAddr <= a;
             status <= StartMiss;
         end
@@ -120,6 +148,10 @@ module mkICache(WideMem mem, ICache ifc);
 
 
     method ActionValue#(Data) resp;
+<<<<<<< HEAD
+=======
+        //$display("[ICache] Processing response");
+>>>>>>> 6a4fe686aa91968d3a8e42df723da5a45a4a0f2e
         hitQ.deq;
         return hitQ.first;
     endmethod
