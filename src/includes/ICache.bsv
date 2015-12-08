@@ -34,7 +34,6 @@ module mkICache(WideMem mem, ICache ifc);
 
     rule sendFillReq (status == StartMiss);
 
-        $display("[[ICache]] Send Fill Request");
         memReqQ.enq(MemReq {op: Ld, addr: missAddr, data:?});
         status <= WaitFillResp;
 
@@ -44,7 +43,6 @@ module mkICache(WideMem mem, ICache ifc);
     rule waitFillResp (status == WaitFillResp);
         
         // calculate cache index and tag
-        $display("[[ICache]] Wait Fill Response");
         CacheWordSelect sel = getWord(missAddr);
         CacheIndex idx = getIndex(missAddr);
         let tag = getTag(missAddr);
@@ -68,7 +66,6 @@ module mkICache(WideMem mem, ICache ifc);
     rule sendToMemory;
 
         // dequeue to get DRAM request
-        $display("[[ICache]] Sending to DRAM");
         memReqQ.deq;
         let r = memReqQ.first;
 
@@ -93,7 +90,6 @@ module mkICache(WideMem mem, ICache ifc);
     rule getFromMemory;
 
         // get DRAM response
-        $display("[[ICache]] Getting from DRAM");
         let line <- mem.resp();
         memRespQ.enq(line);
     
@@ -103,7 +99,6 @@ module mkICache(WideMem mem, ICache ifc);
     method Action req(Addr a) if (status == Ready);
     
         // calculate cache index and tag
-        $display("[ICache] Processing request");
         CacheWordSelect sel = getWord(a);
         CacheIndex idx = getIndex(a);
         CacheTag tag = getTag(a);
@@ -115,11 +110,9 @@ module mkICache(WideMem mem, ICache ifc);
 
         // check load
         if (hit) begin
-            $display("[ICache] Load hit");
             hitQ.enq(dataArray[idx][sel]);
         end
         else begin
-            $display("[ICache] Load miss");
             missAddr <= a;
             status <= StartMiss;
         end
@@ -127,7 +120,6 @@ module mkICache(WideMem mem, ICache ifc);
 
 
     method ActionValue#(Data) resp;
-        $display("[ICache] Processing response");
         hitQ.deq;
         return hitQ.first;
     endmethod

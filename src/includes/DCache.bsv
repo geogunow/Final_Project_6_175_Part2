@@ -74,7 +74,9 @@ module mkDCache#(CoreID id)(
                                     Valid(dataArray[idx][sel]));
                     if (r.op == Lr) begin
                         linkAddr <= tagged Valid getLineAddr(r.addr);
+                        $display("Load reserve hit");
                     end
+                    else $display("Regular load hit");
                 end 
                 else begin
                     // Store (Sc or St)
@@ -83,8 +85,12 @@ module mkDCache#(CoreID id)(
                         if (r.op == Sc) begin
                             hitQ.enq(scSucc);
                             refDMem.commit(r, Valid(dataArray[idx]), Valid(scSucc));
+                            $display("SC hit");
                         end
-                        else refDMem.commit(r, Valid(dataArray[idx]), Invalid);
+                        else begin
+                            refDMem.commit(r, Valid(dataArray[idx]), Invalid);
+                            $display("Regular store hit");
+                        end
                     end
                     else begin
                         missReq <= r;
@@ -168,6 +174,7 @@ module mkDCache#(CoreID id)(
             let old_line = isValid(x.data) ? fromMaybe(?, x.data) : dataArray[idx];
             refDMem.commit(missReq, Valid(old_line), Invalid);
             line[sel] = missReq.data;
+            $display("Store miss commit");
         end
         else if (missReq.op == Sc) begin
             if (isValid(linkAddr) && 
@@ -177,10 +184,12 @@ module mkDCache#(CoreID id)(
                 refDMem.commit(missReq, Valid(old_line), Valid(scSucc));
                 line[sel] = missReq.data;
                 hitQ.enq(scSucc);
+                $display("SC miss commit");
 
             end
             else begin
                 hitQ.enq(scFail);
+                refDMem.commit(missReq, Invalid, Valid(scFail));
             end
         end
         dataArray[idx] <= line;
