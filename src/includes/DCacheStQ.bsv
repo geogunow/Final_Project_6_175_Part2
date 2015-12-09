@@ -268,10 +268,7 @@ module mkDCacheStQ#(CoreID id)(
     rule dng (status != Resp);
         
         // get response
-        CacheMemReq x = ?;
-        case (fromMem.first) matches
-            tagged Req .req : x = req;
-        endcase
+        CacheMemReq x = fromMem.first.Req;
         
         // calculate cache index
         CacheWordSelect sel = getWordSelect(x.addr);
@@ -295,7 +292,8 @@ module mkDCacheStQ#(CoreID id)(
             
             // change cache state
             privArray[idx] <= x.state;
-            if (x.state == I) linkAddr <= Invalid;
+            if (linkAddr matches tagged Valid .la &&& la == getLineAddr(x.addr)
+                && x.state == I) linkAddr <= Invalid;
         end
 
         // address has been downgraded
@@ -319,6 +317,8 @@ module mkDCacheStQ#(CoreID id)(
                 dataArray[idx][sel] <= r.data;
                 refDMem.commit(r, Valid(dataArray[idx]), Invalid);
                 stq.deq;
+                if (linkAddr matches tagged Valid .la &&& la == getLineAddr(r.addr))
+                    linkAddr <= Invalid;
             end
             else begin
                 // no write privledge

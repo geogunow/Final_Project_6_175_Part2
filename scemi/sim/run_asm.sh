@@ -12,7 +12,6 @@ asm_tests=(
   )
 
 asm_tests=(
-    cache
     simple
     add addi
 	and andi

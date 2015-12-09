@@ -8,6 +8,7 @@ fi
 simdut=${1}_dut
 
 bmarks_tests=(
+	mc_incrementers
 	mc_print
 	mc_hello
 	mc_produce_consume
