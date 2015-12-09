@@ -41,6 +41,8 @@ module mkDCacheLHUSM#(CoreID id)(
     // register for the SC response
     Reg#(Maybe#(Data)) scResp <- mkReg(Invalid);
 
+    Reg#(Bool) loadMiss <- mkReg(False);
+
     rule doStore (reqQ.first.op == St);
         
         $display("[Cache] Enqueueing store");
@@ -237,11 +239,13 @@ module mkDCacheLHUSM#(CoreID id)(
         end
         
         status <= Ready;
+        loadMiss <= False;
 
     endrule
 
 
-    rule doLoad ((reqQ.first.op == Ld || (reqQ.first.op == Lr && !stq.notEmpty)));
+    rule doLoad ((reqQ.first.op == Ld || (reqQ.first.op == Lr && !stq.notEmpty))
+        && !loadMiss);
 
         // get request from queue
         $display("[Cache] Doing load");
@@ -280,6 +284,7 @@ module mkDCacheLHUSM#(CoreID id)(
                 else begin
                     missReq <= r;
                     status <= StartMiss;
+                    loadMiss <= True;
                 end
             end
                 
