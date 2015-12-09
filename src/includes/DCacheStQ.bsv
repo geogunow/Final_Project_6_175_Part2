@@ -208,7 +208,6 @@ module mkDCacheStQ#(CoreID id)(
             refDMem.commit(missReq, Valid(old_line), Invalid);
             line[sel] = missReq.data;
             stq.deq;
-            $display("Store miss commit");
         end
         else if (missReq.op == Sc) begin
             if (isValid(linkAddr) && 
@@ -216,11 +215,9 @@ module mkDCacheStQ#(CoreID id)(
 
                 let old_line = dataArray[idx];
                 if (isValid(x.data)) old_line = fromMaybe(?, x.data);
-                //refDMem.commit(missReq, Valid(dataArray[idx]), Valid(scSucc)); 
                 refDMem.commit(missReq, Valid(old_line), Valid(scSucc)); 
                 line[sel] = missReq.data;
                 hitQ.enq(scSucc);
-                $display("SC miss commit");
 
             end
             else begin

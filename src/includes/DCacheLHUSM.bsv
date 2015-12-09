@@ -45,8 +45,6 @@ module mkDCacheLHUSM#(CoreID id)(
 
     rule doStore (reqQ.first.op == St);
         
-        $display("[Cache] Enqueueing store");
-
         // enqueue store request
         MemReq r = reqQ.first;
         reqQ.deq;
@@ -57,7 +55,6 @@ module mkDCacheLHUSM#(CoreID id)(
 
     rule doSc (status == Ready && reqQ.first.op == Sc && !stq.notEmpty);
         
-        $display("[Cache] Doing Sc");
         // get request from queue
         MemReq r = reqQ.first;
         reqQ.deq;
@@ -101,14 +98,12 @@ module mkDCacheLHUSM#(CoreID id)(
 
     
     rule doFence (status == Ready && reqQ.first.op == Fence && !stq.notEmpty);
-        $display("[Cache] Doing fence");
         reqQ.deq;
         refDMem.commit(reqQ.first, Invalid, Invalid);
     endrule
 
 
     rule startMiss (status == StartMiss);
-        $display("[Cache] Start miss");
 
         // calculate cache index and tag
         CacheWordSelect sel = getWordSelect(missReq.addr);
@@ -142,7 +137,6 @@ module mkDCacheLHUSM#(CoreID id)(
 
 
     rule sendFillReq (status == SendFillReq);
-        $display("[Cache] SendFillReq");
 
         // send upgrade request, S if load; otherwise M
         let upg = (missReq.op == Ld || missReq.op == Lr)? S : M;
@@ -152,17 +146,8 @@ module mkDCacheLHUSM#(CoreID id)(
     endrule
 
 
-    rule debugWFR (status == WaitFillResp && fromMem.hasResp);
-        $display("[Cache] guards say WFR should fire");
-    endrule
-    rule debugWFR2 (status == WaitFillResp && fromMem.hasResp);
-        CacheMemResp x = fromMem.first.Resp;
-        $display("[Cache] WFR has valid resp");
-    endrule
-
     rule waitFillResp (status == WaitFillResp && fromMem.hasResp);
        
-        $display("[Cache] WaitFillResp");
         // calculate cache index and tag
         CacheWordSelect sel = getWordSelect(missReq.addr);
         CacheIndex idx = getIndex(missReq.addr);
@@ -183,7 +168,6 @@ module mkDCacheLHUSM#(CoreID id)(
             refDMem.commit(missReq, Valid(old_line), Invalid);
             line[sel] = missReq.data;
             stq.deq;
-            $display("[Cache] Store miss commit");
         end
         else if (missReq.op == Sc) begin
             if (isValid(linkAddr) && 
@@ -193,8 +177,6 @@ module mkDCacheLHUSM#(CoreID id)(
                 if (isValid(x.data)) old_line = fromMaybe(?, x.data);
                 line[sel] = missReq.data;
                 scResp <= Valid(scSucc);
-                $display("[Cache] SC miss commit");
-
             end
             else begin
                 scResp <= Valid(scFail);
@@ -218,7 +200,6 @@ module mkDCacheLHUSM#(CoreID id)(
 
     rule sendCore (status == Resp);
         
-        $display("[Cache] Send Core");
         CacheIndex idx = getIndex(missReq.addr);
         CacheWordSelect sel = getWordSelect(missReq.addr);
         
@@ -248,7 +229,6 @@ module mkDCacheLHUSM#(CoreID id)(
         && !loadMiss);
 
         // get request from queue
-        $display("[Cache] Doing load");
         MemReq r = reqQ.first;
 
         // calculate cache index and tag
@@ -261,7 +241,6 @@ module mkDCacheLHUSM#(CoreID id)(
 
             // dequeue from request queue
             reqQ.deq;
-            $display("[Cache] Doing load ... status ready");
             
             // search stb
             let x = stq.search(r.addr);
@@ -293,17 +272,12 @@ module mkDCacheLHUSM#(CoreID id)(
 
             // cache miss is begin processed, check if it's a store
             // and that nothing is coming back this cycle
-            $display("[Cache] Doing load ... status NOT ready");
-            if (missReq.op == St) $display("[Cache] miss req curr store");
-            else if (missReq.op == Ld) $display("[Cache] miss req curr Ld");
-            if (fromMem.hasResp) $display("[Cache] fromMem has a response");
             if (missReq.op == St && !fromMem.hasResp) begin
                 
                 // check if load hit
                 let x = stq.search(r.addr);
                 if (isValid(x)) begin
                     
-                    $display("[Cache] Load hit under store miss");
                     hitQ.enq(fromMaybe(?, x));
                     refDMem.commit(r, Invalid, x);
                     hit = True;
@@ -313,7 +287,6 @@ module mkDCacheLHUSM#(CoreID id)(
                 end
                 else if (tagArray[idx] == tag && privArray[idx] > I) begin
                     
-                    $display("[Cache] Load hit under store miss");
                     hitQ.enq(dataArray[idx][sel]);
                     refDMem.commit(r, Valid(dataArray[idx]), 
                                     Valid(dataArray[idx][sel]));
@@ -335,7 +308,6 @@ module mkDCacheLHUSM#(CoreID id)(
     
     rule dng (status != Resp && !fromMem.hasResp);
         
-        $display("[Cache] DOWNGRADING");
         // get response
         CacheMemReq x = fromMem.first.Req;
         
@@ -372,7 +344,6 @@ module mkDCacheLHUSM#(CoreID id)(
 
     rule mvStqToCache (status == Ready && stq.notEmpty && 
         (!reqQ.notEmpty || reqQ.first.op != Ld));
-        $display("[Cache] Process store");
 
         // get request from store queue
         MemReq r <- stq.issue;
